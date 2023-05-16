@@ -586,7 +586,7 @@ void MjSimImpl::startSimulation()
   setSimulationInitialState();
 }
 
-void MjRobot::updateSensors(mc_control::MCGlobalController * gc, mjModel * model, mjData * data)
+void MjRobot::updateSensors(mc_control::MCGlobalController * gc, mjModel * model, mjData * data, bool disturbance)
 {
   for(size_t i = 0; i < mj_jnt_ids.size(); ++i)
   {
@@ -661,16 +661,18 @@ void MjRobot::updateSensors(mc_control::MCGlobalController * gc, mjModel * model
   gc->setWrenches(name, wrenches);
 
   // Joint sensor updates
+  auto fakeTorques = torques;
+  if(name.compare("kinova") == 0 and disturbance) fakeTorques[5] = fakeTorques[5] - 5.0;
   gc->setEncoderValues(name, encoders);
   gc->setEncoderVelocities(name, alphas);
-  gc->setJointTorques(name, torques);
+  gc->setJointTorques(name, fakeTorques);
 }
 
-void MjSimImpl::updateData()
+void MjSimImpl::updateData(bool disturbance)
 {
   for(auto & r : robots)
   {
-    r.updateSensors(controller.get(), model, data);
+    r.updateSensors(controller.get(), model, data, disturbance);
   }
 }
 
@@ -697,7 +699,8 @@ void MjRobot::sendControl(const mjModel & model,
                           mjData & data,
                           size_t interp_idx,
                           size_t frameskip_,
-                          bool torque_control)
+                          bool torque_control,
+                          bool disturbance)
 {
   for(size_t i = 0; i < mj_ctrl.size(); ++i)
   {
@@ -722,7 +725,7 @@ void MjRobot::sendControl(const mjModel & model,
     {
       if(torque_control && torque_ref != 0)
       {
-        mj_ctrl[i] = torque_ref;
+        mj_ctrl[i] = torque_ref + ((i == 5 and disturbance) ? 5.0 : 0);
       }
       else
       {
@@ -758,10 +761,14 @@ bool MjSimImpl::controlStep()
       r.updateControl(controller->robots().robot(r.name));
     }
   }
+
+  auto use_torque = config.torque_control;
+  if (controller->controller().datastore().has("ControlMode")) use_torque = controller->controller().datastore().get<std::string>("ControlMode").compare("Torque") == 0;
+
   // On each control iter
   for(auto & r : robots)
   {
-    r.sendControl(*model, *data, interp_idx, frameskip_, config.torque_control);
+    r.sendControl(*model, *data, interp_idx, frameskip_, use_torque, config.with_disturbance);
   }
   iterCount_++;
   return false;
@@ -832,7 +839,7 @@ bool MjSimImpl::stepSimulation()
       std::lock_guard<std::mutex> lock(rendering_mutex_);
       simStep();
     }
-    updateData();
+    updateData(this->config.with_disturbance);
     return controlStep();
   };
   bool done = false;
@@ -952,6 +959,7 @@ bool MjSimImpl::render()
       doNStepsButton(50, false);
       doNStepsButton(100, true);
     }
+    ImGui::Checkbox("Disturbance active", &config.with_disturbance);
     auto flag_to_gui = [&](const char * label, mjtVisFlag flag) {
       bool show = options.flags[flag];
       if(ImGui::Checkbox(label, &show))
