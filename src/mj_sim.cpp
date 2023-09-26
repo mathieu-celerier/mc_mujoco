@@ -15,8 +15,6 @@
 
 #include "ImGuizmo.h"
 
-#include "MujocoClient.h"
-
 #include <boost/filesystem.hpp>
 namespace bfs = boost::filesystem;
 
@@ -29,7 +27,7 @@ namespace bfs = boost::filesystem;
 namespace mc_mujoco
 {
 
-double MjRobot::PD(double jnt_id, double q_ref, double q, double qdot_ref, double qdot)
+double MjRobot::PD(size_t jnt_id, double q_ref, double q, double qdot_ref, double qdot)
 {
   double p_error = q_ref - q;
   double v_error = qdot_ref - qdot;
@@ -47,7 +45,7 @@ bool MjRobot::loadGain(const std::string & path_to_pd, const std::vector<std::st
                                                      path_to_pd);
   }
 
-  int num_joints = joints.size();
+  size_t num_joints = joints.size();
   if(!num_joints)
   {
     return false;
@@ -108,25 +106,21 @@ bool MjRobot::loadGain(const std::string & path_to_pd, const std::vector<std::st
 MjSimImpl::MjSimImpl(const MjConfiguration & config)
 : controller(std::make_unique<mc_control::MCGlobalController>(config.mc_config)), config(config)
 {
-  auto get_robot_cfg_path_local = [&](const std::string & robot_name) {
-    return bfs::path(mc_mujoco::USER_FOLDER) / (robot_name + ".yaml");
-  };
-  auto get_robot_cfg_path_global = [&](const std::string & robot_name) {
-    return bfs::path(mc_mujoco::SHARE_FOLDER) / (robot_name + ".yaml");
-  };
-  auto get_robot_cfg_path = [&](const std::string & robot_name) -> std::string {
+  auto get_robot_cfg_path_local = [&](const std::string & robot_name)
+  { return bfs::path(mc_mujoco::USER_FOLDER) / (robot_name + ".yaml"); };
+  auto get_robot_cfg_path_global = [&](const std::string & robot_name)
+  { return bfs::path(mc_mujoco::SHARE_FOLDER) / (robot_name + ".yaml"); };
+  auto get_robot_cfg_path = [&](const std::string & robot_name) -> std::string
+  {
     if(bfs::exists(get_robot_cfg_path_local(robot_name)))
     {
       return get_robot_cfg_path_local(robot_name).string();
     }
-    else if(bfs::exists(get_robot_cfg_path_global(robot_name)))
+    if(bfs::exists(get_robot_cfg_path_global(robot_name)))
     {
       return get_robot_cfg_path_global(robot_name).string();
     }
-    else
-    {
-      return "";
-    }
+    return "";
   };
 
   /** Map between name and xml file path of objects specified in mujoco config **/
@@ -138,7 +132,8 @@ MjSimImpl::MjSimImpl(const MjConfiguration & config)
 
   // load all robots named in mujoco config
   auto mc_mujoco_cfg_path = fmt::format("{}/mc_mujoco.yaml", USER_FOLDER);
-  auto mc_mujoco_cfg = [&mc_mujoco_cfg_path]() -> mc_rtc::Configuration {
+  auto mc_mujoco_cfg = [&mc_mujoco_cfg_path]() -> mc_rtc::Configuration
+  {
     if(bfs::exists(mc_mujoco_cfg_path))
     {
       return {mc_mujoco_cfg_path};
@@ -179,7 +174,7 @@ MjSimImpl::MjSimImpl(const MjConfiguration & config)
   for(const auto & r : controller->robots())
   {
     const auto & robot_cfg_path = get_robot_cfg_path(r.module().name);
-    if(robot_cfg_path.size())
+    if(!robot_cfg_path.empty())
     {
       auto robot_cfg = mc_rtc::Configuration(robot_cfg_path);
       if(!robot_cfg.has("xmlModelPath"))
@@ -197,6 +192,9 @@ MjSimImpl::MjSimImpl(const MjConfiguration & config)
     }
   }
 
+  // load MuJoCo plugins
+  loadPlugins(mc_mujoco_cfg);
+
   // initial mujoco here and load XML model
   bool initialized = mujoco_init(this, mjObjects, mcObjects);
   if(!initialized)
@@ -209,7 +207,7 @@ MjSimImpl::MjSimImpl(const MjConfiguration & config)
   {
     auto & r = robots[i];
     bool has_motor =
-        std::any_of(r.mj_mot_names.begin(), r.mj_mot_names.end(), [](const std::string & m) { return m.size() != 0; });
+        std::any_of(r.mj_mot_names.begin(), r.mj_mot_names.end(), [](const std::string & m) { return !m.empty(); });
     const auto & robot = controller->robot(r.name);
     if(robot.mb().nrDof() == 0 || (robot.mb().nrDof() == 6 && robot.mb().joint(0).dof() == 6) || !has_motor)
     {
@@ -241,11 +239,11 @@ void MjSimImpl::cleanup()
 
 void MjObject::initialize(mjModel * model)
 {
-  if(root_body.size())
+  if(!root_body.empty())
   {
     root_body_id = mj_name2id(model, mjOBJ_BODY, root_body.c_str());
   }
-  if(root_joint.size())
+  if(!root_joint.empty())
   {
     auto root_joint_id = mj_name2id(model, mjOBJ_JOINT, root_joint.c_str());
     root_qpos_idx = model->jnt_qposadr[root_joint_id];
@@ -260,11 +258,12 @@ void MjRobot::initialize(mjModel * model, const mc_rbdyn::Robot & robot)
   {
     mj_jnt_ids.push_back(mj_name2id(model, mjOBJ_JOINT, j.c_str()));
   }
-  auto fill_acuator_ids = [&](const std::vector<std::string> & names, std::vector<int> & ids) {
+  auto fill_acuator_ids = [&](const std::vector<std::string> & names, std::vector<int> & ids)
+  {
     ids.resize(0);
     for(const auto & n : names)
     {
-      if(n.size())
+      if(!n.empty())
       {
         ids.push_back(mj_name2id(model, mjOBJ_ACTUATOR, n.c_str()));
       }
@@ -277,18 +276,19 @@ void MjRobot::initialize(mjModel * model, const mc_rbdyn::Robot & robot)
   fill_acuator_ids(mj_mot_names, mj_mot_ids);
   fill_acuator_ids(mj_pos_act_names, mj_pos_act_ids);
   fill_acuator_ids(mj_vel_act_names, mj_vel_act_ids);
-  if(root_body.size())
+  if(!root_body.empty())
   {
     root_body_id = mj_name2id(model, mjOBJ_BODY, root_body.c_str());
   }
-  if(root_joint.size())
+  if(!root_joint.empty())
   {
     auto root_joint_id = mj_name2id(model, mjOBJ_JOINT, root_joint.c_str());
     root_qpos_idx = model->jnt_qposadr[root_joint_id];
     root_qvel_idx = model->jnt_dofadr[root_joint_id];
   }
   auto init_sensor_id = [&](const char * mj_name, const char * mc_name, const std::string & sensor_name,
-                            const char * suffix, mjtSensor type, std::unordered_map<std::string, int> & mapping) {
+                            const char * suffix, mjtSensor type, std::unordered_map<std::string, int> & mapping)
+  {
     auto mj_sensor = prefixed(fmt::format("{}_{}", sensor_name, suffix));
     auto sensor_id = mujoco_get_sensor_id(*model, mj_sensor, type);
     if(sensor_id == -1)
@@ -340,8 +340,9 @@ void MjRobot::reset(const mc_rbdyn::Robot & robot)
   torques = std::vector<double>(rjo.size(), 0.0);
   for(const auto & mj_jn : mj_jnt_names)
   {
-    const auto & jn = [&]() {
-      if(prefix.size())
+    const auto & jn = [&]()
+    {
+      if(!prefix.empty())
       {
         return mj_jn.substr(prefix.size() + 1);
       }
@@ -388,6 +389,68 @@ void MjRobot::reset(const mc_rbdyn::Robot & robot)
   kd = default_kd;
 }
 
+template<typename T>
+void MjSimImpl::setPosW(const T & robot, const sva::PTransformd & pos)
+{
+  const auto & t = pos.translation();
+  Eigen::Quaterniond q = Eigen::Quaterniond(pos.rotation()).inverse();
+  if(robot.root_qpos_idx != -1 && robot.root_joint_type == mjJNT_FREE)
+  {
+    data->qpos[robot.root_qpos_idx + 0] = t.x();
+    data->qpos[robot.root_qpos_idx + 1] = t.y();
+    data->qpos[robot.root_qpos_idx + 2] = t.z();
+    data->qpos[robot.root_qpos_idx + 3] = q.w();
+    data->qpos[robot.root_qpos_idx + 4] = q.x();
+    data->qpos[robot.root_qpos_idx + 5] = q.y();
+    data->qpos[robot.root_qpos_idx + 6] = q.z();
+    // push linear/angular velocities
+    mju_zero3(&data->qvel[robot.root_qvel_idx]);
+    mju_zero3(&data->qvel[robot.root_qvel_idx + 3]);
+  }
+  else if(robot.root_body_id != -1)
+  {
+    model->body_pos[3 * robot.root_body_id + 0] = t.x();
+    model->body_pos[3 * robot.root_body_id + 1] = t.y();
+    model->body_pos[3 * robot.root_body_id + 2] = t.z();
+    model->body_quat[4 * robot.root_body_id + 0] = q.w();
+    model->body_quat[4 * robot.root_body_id + 1] = q.x();
+    model->body_quat[4 * robot.root_body_id + 2] = q.y();
+    model->body_quat[4 * robot.root_body_id + 3] = q.z();
+  }
+}
+
+sva::PTransformd MjSimImpl::getObjectPosW(const std::string & object) const
+{
+  auto it = std::find_if(objects.begin(), objects.end(), [&](const auto & o) { return o.name == object; });
+  if(it == objects.end())
+  {
+    mc_rtc::log::error_and_throw("Requested position of object {} which is not in this simulation", object);
+  }
+  const auto & o = *it;
+  if(o.root_qpos_idx != -1 && o.root_joint_type == mjJNT_FREE)
+  {
+    Eigen::Vector3d t = Eigen::Map<Eigen::Vector3d>(&data->qpos[o.root_qpos_idx]);
+    // Note: no map here because Eigen::Map wants x, y, z, w
+    Eigen::Quaterniond q;
+    q.w() = data->qpos[o.root_qpos_idx + 3];
+    q.x() = data->qpos[o.root_qpos_idx + 4];
+    q.y() = data->qpos[o.root_qpos_idx + 5];
+    q.z() = data->qpos[o.root_qpos_idx + 6];
+    return {q.inverse(), t};
+  }
+  if(o.root_body_id != -1)
+  {
+    Eigen::Vector3d t = Eigen::Map<Eigen::Vector3d>(&model->body_pos[3 * o.root_body_id]);
+    Eigen::Quaterniond q;
+    q.w() = model->body_quat[4 * o.root_body_id + 0];
+    q.x() = model->body_quat[4 * o.root_body_id + 1];
+    q.y() = model->body_quat[4 * o.root_body_id + 2];
+    q.z() = model->body_quat[4 * o.root_body_id + 3];
+    return {q.inverse(), t};
+  }
+  mc_rtc::log::error_and_throw("Cannot retrieve the position of object {} in simulation", object);
+}
+
 void MjSimImpl::setSimulationInitialState()
 {
   if(controller)
@@ -395,66 +458,14 @@ void MjSimImpl::setSimulationInitialState()
     for(auto & o : objects)
     {
       o.initialize(model);
-      if(o.root_qpos_idx != -1 && o.root_joint_type == mjJNT_FREE)
-      {
-        const auto & t = o.init_pose.translation();
-        data->qpos[o.root_qpos_idx + 0] = t.x();
-        data->qpos[o.root_qpos_idx + 1] = t.y();
-        data->qpos[o.root_qpos_idx + 2] = t.z();
-        Eigen::Quaterniond q = Eigen::Quaterniond(o.init_pose.rotation()).inverse();
-        data->qpos[o.root_qpos_idx + 3] = q.w();
-        data->qpos[o.root_qpos_idx + 4] = q.x();
-        data->qpos[o.root_qpos_idx + 5] = q.y();
-        data->qpos[o.root_qpos_idx + 6] = q.z();
-        // push linear/angular velocities
-        mju_zero3(&data->qvel[o.root_qvel_idx]);
-        mju_zero3(&data->qvel[o.root_qvel_idx + 3]);
-      }
-      else if(o.root_body_id != -1)
-      {
-        const auto & t = o.init_pose.translation();
-        model->body_pos[3 * o.root_body_id + 0] = t.x();
-        model->body_pos[3 * o.root_body_id + 1] = t.y();
-        model->body_pos[3 * o.root_body_id + 2] = t.z();
-        Eigen::Quaterniond q = Eigen::Quaterniond(o.init_pose.rotation()).inverse();
-        model->body_quat[4 * o.root_body_id + 0] = q.w();
-        model->body_quat[4 * o.root_body_id + 1] = q.x();
-        model->body_quat[4 * o.root_body_id + 2] = q.y();
-        model->body_quat[4 * o.root_body_id + 3] = q.z();
-      }
+      setPosW(o, o.init_pose);
     }
 
     for(auto & r : robots)
     {
       const auto & robot = controller->robots().robot(r.name);
       r.initialize(model, robot);
-      if(r.root_qpos_idx != -1)
-      {
-        const auto & t = robot.posW().translation();
-        data->qpos[r.root_qpos_idx + 0] = t.x();
-        data->qpos[r.root_qpos_idx + 1] = t.y();
-        data->qpos[r.root_qpos_idx + 2] = t.z();
-        Eigen::Quaterniond q = Eigen::Quaterniond(robot.posW().rotation()).inverse();
-        data->qpos[r.root_qpos_idx + 3] = q.w();
-        data->qpos[r.root_qpos_idx + 4] = q.x();
-        data->qpos[r.root_qpos_idx + 5] = q.y();
-        data->qpos[r.root_qpos_idx + 6] = q.z();
-        // push linear/angular velocities
-        mju_zero3(&data->qvel[r.root_qvel_idx]);
-        mju_zero3(&data->qvel[r.root_qvel_idx + 3]);
-      }
-      else if(r.root_body_id != -1)
-      {
-        const auto & t = robot.posW().translation();
-        model->body_pos[3 * r.root_body_id + 0] = t.x();
-        model->body_pos[3 * r.root_body_id + 1] = t.y();
-        model->body_pos[3 * r.root_body_id + 2] = t.z();
-        Eigen::Quaterniond q = Eigen::Quaterniond(robot.posW().rotation()).inverse();
-        model->body_quat[4 * r.root_body_id + 0] = q.w();
-        model->body_quat[4 * r.root_body_id + 1] = q.x();
-        model->body_quat[4 * r.root_body_id + 2] = q.y();
-        model->body_quat[4 * r.root_body_id + 3] = q.z();
-      }
+      setPosW(r, robot.posW());
       for(size_t i = 0; i < r.mj_jnt_ids.size(); ++i)
       {
         if(r.mj_jnt_to_rjo[i] == -1)
@@ -466,91 +477,124 @@ void MjSimImpl::setSimulationInitialState()
       }
     }
   }
-
   mj_forward(model, data);
+}
+
+void MjSimImpl::setObjectPosW(const std::string & object, const sva::PTransformd & pt)
+{
+  for(const auto & o : objects)
+  {
+    if(o.name == object)
+    {
+      setPosW(o, pt);
+      return;
+    }
+  }
+}
+
+void MjSimImpl::setRobotPosW(const std::string & robot, const sva::PTransformd & pt)
+{
+  for(const auto & r : robots)
+  {
+    if(r.name == robot)
+    {
+      setPosW(r, pt);
+      return;
+    }
+  }
 }
 
 void MjSimImpl::makeDatastoreCalls()
 {
+  auto & ds = controller->controller().datastore();
+  for(auto & o : objects)
+  {
+    ds.make_call(o.name + "::SetPosW", [this, name = o.name](const sva::PTransformd & pt) { setObjectPosW(name, pt); });
+  }
   for(auto & r : robots)
   {
+    ds.make_call(r.name + "::SetPosW", [this, name = r.name](const sva::PTransformd & pt) { setRobotPosW(name, pt); });
     // make_call for setting pd gains (for all joints)
-    controller->controller().datastore().make_call(
-        r.name + "::SetPDGains", [this, &r](const std::vector<double> & p_vec, const std::vector<double> & d_vec) {
-          const auto & rjo = controller->robots().robot(r.name).module().ref_joint_order();
-          if(p_vec.size() != rjo.size())
-          {
-            mc_rtc::log::warning("[mc_mujoco] {}::SetPDGains failed. p_vec size({})!=ref_joint_order size({})", r.name,
-                                 p_vec.size(), rjo.size());
-            return false;
-          }
-          if(d_vec.size() != rjo.size())
-          {
-            mc_rtc::log::warning("[mc_mujoco] {}::SetPDGains failed. d_vec size({})!=ref_joint_order size({})", r.name,
-                                 d_vec.size(), rjo.size());
-            return false;
-          }
-          r.kp = p_vec;
-          r.kd = d_vec;
-          return true;
-        });
+    ds.make_call(r.name + "::SetPDGains",
+                 [this, &r](const std::vector<double> & p_vec, const std::vector<double> & d_vec)
+                 {
+                   const auto & rjo = controller->robots().robot(r.name).module().ref_joint_order();
+                   if(p_vec.size() != rjo.size())
+                   {
+                     mc_rtc::log::warning("[mc_mujoco] {}::SetPDGains failed. p_vec size({})!=ref_joint_order size({})",
+                                          r.name, p_vec.size(), rjo.size());
+                     return false;
+                   }
+                   if(d_vec.size() != rjo.size())
+                   {
+                     mc_rtc::log::warning("[mc_mujoco] {}::SetPDGains failed. d_vec size({})!=ref_joint_order size({})",
+                                          r.name, d_vec.size(), rjo.size());
+                     return false;
+                   }
+                   r.kp = p_vec;
+                   r.kd = d_vec;
+                   return true;
+                 });
 
     // make_call for setting pd gains (by name)
-    controller->controller().datastore().make_call(
-        r.name + "::SetPDGainsByName", [this, &r](const std::string & jn, double p, double d) {
-          const auto & rjo = controller->robots().robot(r.name).module().ref_joint_order();
-          auto rjo_it = std::find(rjo.begin(), rjo.end(), jn);
-          if(rjo_it == rjo.end())
-          {
-            mc_rtc::log::warning("[mc_mujoco] {}::SetPDGainsByName failed. Joint {} not found in ref_joint_order.",
-                                 r.name, jn);
-            return false;
-          }
-          int rjo_idx = std::distance(rjo.begin(), rjo_it);
-          r.kp[rjo_idx] = p;
-          r.kd[rjo_idx] = d;
-          return true;
-        });
+    ds.make_call(r.name + "::SetPDGainsByName",
+                 [this, &r](const std::string & jn, double p, double d)
+                 {
+                   const auto & rjo = controller->robots().robot(r.name).module().ref_joint_order();
+                   auto rjo_it = std::find(rjo.begin(), rjo.end(), jn);
+                   if(rjo_it == rjo.end())
+                   {
+                     mc_rtc::log::warning(
+                         "[mc_mujoco] {}::SetPDGainsByName failed. Joint {} not found in ref_joint_order.", r.name, jn);
+                     return false;
+                   }
+                   int rjo_idx = std::distance(rjo.begin(), rjo_it);
+                   r.kp[rjo_idx] = p;
+                   r.kd[rjo_idx] = d;
+                   return true;
+                 });
 
     // make_call for reading pd gains (for all joints)
-    controller->controller().datastore().make_call(
-        r.name + "::GetPDGains", [this, &r](std::vector<double> & p_vec, std::vector<double> & d_vec) {
-          p_vec.resize(0);
-          d_vec.resize(0);
-          p_vec = r.kp;
-          d_vec = r.kd;
-          const auto & rjo = controller->robots().robot(r.name).module().ref_joint_order();
-          if(p_vec.size() != rjo.size())
-          {
-            mc_rtc::log::warning("[mc_mujoco] {}::GetPDGains failed. p_vec size({})!=ref_joint_order size({})", r.name,
-                                 p_vec.size(), rjo.size());
-            return false;
-          }
-          if(d_vec.size() != rjo.size())
-          {
-            mc_rtc::log::warning("[mc_mujoco] {}::GetPDGains failed. d_vec size({})!=ref_joint_order size({})", r.name,
-                                 d_vec.size(), rjo.size());
-            return false;
-          }
-          return true;
-        });
+    ds.make_call(r.name + "::GetPDGains",
+                 [this, &r](std::vector<double> & p_vec, std::vector<double> & d_vec)
+                 {
+                   p_vec.resize(0);
+                   d_vec.resize(0);
+                   p_vec = r.kp;
+                   d_vec = r.kd;
+                   const auto & rjo = controller->robots().robot(r.name).module().ref_joint_order();
+                   if(p_vec.size() != rjo.size())
+                   {
+                     mc_rtc::log::warning("[mc_mujoco] {}::GetPDGains failed. p_vec size({})!=ref_joint_order size({})",
+                                          r.name, p_vec.size(), rjo.size());
+                     return false;
+                   }
+                   if(d_vec.size() != rjo.size())
+                   {
+                     mc_rtc::log::warning("[mc_mujoco] {}::GetPDGains failed. d_vec size({})!=ref_joint_order size({})",
+                                          r.name, d_vec.size(), rjo.size());
+                     return false;
+                   }
+                   return true;
+                 });
 
     // make_call for reading pd gains (by name)
-    controller->controller().datastore().make_call(
-        r.name + "::GetPDGainsByName", [this, &r](const std::string & jn, double & p, double & d) {
-          const auto & rjo = controller->robots().robot(r.name).module().ref_joint_order();
-          auto rjo_it = std::find(rjo.begin(), rjo.end(), jn);
-          if(rjo_it == rjo.end())
-          {
-            mc_rtc::log::warning("[mc_mujoco] {}::GetPDGainsByName failed. Joint {} not found in ref_joint_order.",
-                                 r.name, jn);
-            return false;
-          }
-          int rjo_idx = std::distance(rjo.begin(), rjo_it);
-          p = r.kp[rjo_idx];
-          d = r.kd[rjo_idx];
-          return true;
-        });
+    ds.make_call(r.name + "::GetPDGainsByName",
+                 [this, &r](const std::string & jn, double & p, double & d)
+                 {
+                   const auto & rjo = controller->robots().robot(r.name).module().ref_joint_order();
+                   auto rjo_it = std::find(rjo.begin(), rjo.end(), jn);
+                   if(rjo_it == rjo.end())
+                   {
+                     mc_rtc::log::warning(
+                         "[mc_mujoco] {}::GetPDGainsByName failed. Joint {} not found in ref_joint_order.", r.name, jn);
+                     return false;
+                   }
+                   int rjo_idx = std::distance(rjo.begin(), rjo_it);
+                   p = r.kp[rjo_idx];
+                   d = r.kd[rjo_idx];
+                   return true;
+                 });
   }
 }
 
@@ -763,7 +807,8 @@ bool MjSimImpl::controlStep()
   }
 
   auto use_torque = config.torque_control;
-  if (controller->controller().datastore().has("ControlMode")) use_torque = controller->controller().datastore().get<std::string>("ControlMode").compare("Torque") == 0;
+  if(controller->controller().datastore().has("ControlMode"))
+    use_torque = controller->controller().datastore().get<std::string>("ControlMode").compare("Torque") == 0;
 
   // On each control iter
   for(auto & r : robots)
@@ -805,6 +850,10 @@ void MjSimImpl::resetSimulation(const std::map<std::string, std::vector<double>>
   mj_resetData(model, data);
   setSimulationInitialState();
   makeDatastoreCalls();
+  for(auto & marker : markers)
+  {
+    marker.marker.pose(getObjectPosW(marker.name));
+  }
 }
 
 bool MjSimImpl::stepSimulation()
@@ -817,6 +866,7 @@ bool MjSimImpl::stepSimulation()
   // Only run the GUI update if the simulation is paused
   if(config.step_by_step && rem_steps == 0)
   {
+    mj_kinematics(model, data);
     if(controller)
     {
       controller->running = false;
@@ -834,7 +884,8 @@ bool MjSimImpl::stepSimulation()
     mj_sim_dt[(iterCount_ - 1) % mj_sim_dt.size()] = dt.count();
   }
   mj_sim_start_t = start_step;
-  auto do_step = [this, &start_step]() {
+  auto do_step = [this, &start_step]()
+  {
     {
       std::lock_guard<std::mutex> lock(rendering_mutex_);
       simStep();
@@ -910,6 +961,13 @@ bool MjSimImpl::render()
     client->draw2D(window);
 #endif
     client->draw3D();
+    for(auto & [name, marker] : markers)
+    {
+      if(marker.draw(client->view(), client->projection()) || marker.active())
+      {
+        setObjectPosW(name, marker.pose());
+      }
+    }
   }
   {
     auto right_margin = 5.0f;
@@ -942,7 +1000,8 @@ bool MjSimImpl::render()
     ImGui::Checkbox("Step-by-step", &config.step_by_step);
     if(config.step_by_step)
     {
-      auto doNStepsButton = [&](size_t n, bool final_) {
+      auto doNStepsButton = [&](size_t n, bool final_)
+      {
         size_t n_ms = std::ceil(n * 1000 * (controller ? controller->timestep() : model->opt.timestep));
         if(ImGui::Button(fmt::format("+{}ms", n_ms).c_str()))
         {
@@ -960,7 +1019,8 @@ bool MjSimImpl::render()
       doNStepsButton(100, true);
     }
     ImGui::Checkbox("Disturbance active", &config.with_disturbance);
-    auto flag_to_gui = [&](const char * label, mjtVisFlag flag) {
+    auto flag_to_gui = [&](const char * label, mjtVisFlag flag)
+    {
       bool show = options.flags[flag];
       if(ImGui::Checkbox(label, &show))
       {
@@ -971,7 +1031,8 @@ bool MjSimImpl::render()
     flag_to_gui("Show contact forces [F]", mjVIS_CONTACTFORCE);
     flag_to_gui("Make Transparent [T]", mjVIS_TRANSPARENT);
     flag_to_gui("Convex Hull rendering [V]", mjVIS_CONVEXHULL);
-    auto group_to_checkbox = [&](size_t group, bool last) {
+    auto group_to_checkbox = [&](size_t group, bool last)
+    {
       bool show = options.geomgroup[group];
       if(ImGui::Checkbox(fmt::format("{}", group).c_str(), &show))
       {
@@ -990,6 +1051,22 @@ bool MjSimImpl::render()
     if(ImGui::Button("Reset simulation", ImVec2(-FLT_MIN, 0.0f)))
     {
       reset_simulation_ = true;
+    }
+    for(const auto & o : objects)
+    {
+      auto it = std::find_if(markers.begin(), markers.end(), [&](const auto & m) { return m.name == o.name; });
+      bool active = (it != markers.end());
+      if(ImGui::Checkbox(fmt::format("Set {} position", o.name).c_str(), &active))
+      {
+        if(!active)
+        {
+          markers.erase(it);
+        }
+        else
+        {
+          markers.push_back(MjObjectMarker{o.name, {getObjectPosW(o.name), ControlAxis::ALL}});
+        }
+      }
     }
     ImGui::End();
   }
@@ -1026,7 +1103,8 @@ void MjSimImpl::saveGUISettings()
   }
 
   auto config_path = fmt::format("{}/mc_mujoco.yaml", USER_FOLDER);
-  auto config = [&]() -> mc_rtc::Configuration {
+  auto config = [&]() -> mc_rtc::Configuration
+  {
     if(bfs::exists(config_path))
     {
       return {config_path};
@@ -1054,6 +1132,40 @@ void MjSimImpl::saveGUISettings()
   visualize_c.add("contact-split", static_cast<bool>(options.flags[mjVIS_CONTACTSPLIT]));
   config.save(config_path);
   mc_rtc::log::success("[mc_mujoco] Configuration saved to {}", config_path);
+}
+
+void MjSimImpl::loadPlugins(const mc_rtc::Configuration & mc_mujoco_cfg) const
+{
+  // print built-in plugins
+  int nplugin = mjp_pluginCount();
+  if(nplugin)
+  {
+    mc_rtc::log::info("[mc_mujoco] Built-in plugins");
+    for(int i = 0; i < nplugin; ++i)
+    {
+      mc_rtc::log::info("  - {}", mjp_getPluginAtSlot(i)->name);
+    }
+  }
+
+  // scan plugins from the user-specified paths
+  for(const auto & plugin_path : mc_mujoco_cfg("PluginPaths", std::vector<std::string>{}))
+  {
+    mc_rtc::log::info("[mc_mujoco] Scan plugins in {}", plugin_path);
+    mj_loadAllPluginLibraries(
+        plugin_path.c_str(),
+        +[](const char * filename, int first, int count)
+        {
+          if(count == 0)
+          {
+            return;
+          }
+          mc_rtc::log::info("[mc_mujoco] Plugins registered by library {}", filename);
+          for(int i = first; i < first + count; ++i)
+          {
+            mc_rtc::log::info("  - {}", mjp_getPluginAtSlot(i)->name);
+          }
+        });
+  }
 }
 
 MjSim::MjSim(const MjConfiguration & config) : impl(new MjSimImpl(config))
