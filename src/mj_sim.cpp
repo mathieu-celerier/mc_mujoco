@@ -595,6 +595,27 @@ void MjSimImpl::makeDatastoreCalls()
                    d = r.kd[rjo_idx];
                    return true;
                  });
+
+    // make_call to set applied external force to a body of a robot (by name)
+    ds.make_call(
+        r.name + "::ApplyForcesOnBody",
+        [this, &r](const std::string & bodyname, const sva::ForceVecd & wrench, const Eigen::Vector3d localpose)
+        {
+          auto & robot = controller->robots().robot(r.name);
+          if(robot.hasBody(bodyname))
+          {
+            auto mjr_body_idx = mj_name2id(model, mjOBJ_BODY, (r.prefixed(bodyname)).c_str());
+            mj_applyFT(model, data, wrench.force().data(), wrench.couple().data(), localpose.data(), mjr_body_idx,
+                       data->qfrc_applied);
+            return true;
+          }
+          else
+          {
+            mc_rtc::log::warning("[mc_mujoco] {}::ApplyForcesOnBody failed. Robot does not have any body called {}",
+                                 r.name, bodyname);
+            return false;
+          }
+        });
   }
 }
 
@@ -829,6 +850,7 @@ void MjSimImpl::simStep()
   // take one step in simulation
   // model.opt.timestep will be used here
   mj_step(model, data);
+  mju_zero(data->qfrc_applied, model->nv);
 
   wallclock = data->time;
 }
