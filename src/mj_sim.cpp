@@ -788,7 +788,7 @@ void MjRobot::sendControl(const mjModel & model,
     torque_ref += mj_prev_ctrl_jointTorque[i];
     if(mot_id != -1)
     {
-      if(torque_control && torque_ref != 0)
+      if(torque_control)
       {
         mj_ctrl[i] = torque_ref + ((i == 5 and disturbance) ? 5.0 : 0);
       }
