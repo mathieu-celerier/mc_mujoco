@@ -640,6 +640,7 @@ void MjSimImpl::startSimulation()
   {
     r.initialize(model, controller->robot(r.name));
     controller->setEncoderValues(r.name, r.encoders);
+    controller->setEncoderVelocities(r.name, r.alphas);
   }
   for(const auto & r : robots)
   {
