@@ -118,6 +118,12 @@ struct MjRobot
   std::vector<std::string> mj_vel_act_names;
   /** Corresppondance from velocity actuator to id inside MuJoCo */
   std::vector<int> mj_vel_act_ids;
+  /** Name of a tendon-driven general actuator used for a gripper compatibility path */
+  std::string mj_general_act_name;
+  /** Correspondance from the general actuator name to id inside MuJoCo */
+  int mj_general_act_id = -1;
+  /** Joint-control index used to generate the command for the general actuator */
+  int mj_general_act_ctrl_idx = -1;
   /** Names of the joints inside MuJoCo */
   std::vector<std::string> mj_jnt_names;
   /** Correspondance from joint name to id inside MuJoCo */

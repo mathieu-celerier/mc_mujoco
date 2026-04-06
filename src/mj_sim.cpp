@@ -1,6 +1,7 @@
 #include "mj_sim_impl.h"
 #include "mj_utils.h"
 
+#include <algorithm>
 #include <cassert>
 #include <chrono>
 #include <type_traits>
@@ -341,6 +342,10 @@ void MjRobot::initialize(mjModel * model, const mc_rbdyn::Robot & robot)
   fill_actuator_ids(mj_mot_names, mj_mot_ids);
   fill_actuator_ids(mj_pos_act_names, mj_pos_act_ids);
   fill_actuator_ids(mj_vel_act_names, mj_vel_act_ids);
+  if(!mj_general_act_name.empty())
+  {
+    mj_general_act_id = mj_name2id(model, mjOBJ_ACTUATOR, mj_general_act_name.c_str());
+  }
   if(!root_body.empty())
   {
     root_body_id = mj_name2id(model, mjOBJ_BODY, root_body.c_str());
@@ -396,11 +401,17 @@ void MjRobot::reset(const mc_rbdyn::Robot & robot)
       gripper_active_joints.insert(joint);
     }
   }
-  if(rjo.size() != mj_jnt_names.size())
+  if(rjo.size() > mj_jnt_names.size())
   {
     mc_rtc::log::error_and_throw<std::runtime_error>(
         "[mc_mujoco] Missmatch in model for {}, reference joint order has {} joints but MuJoCo models has {} joints",
         name, rjo.size(), mj_jnt_names.size());
+  }
+  if(rjo.size() != mj_jnt_names.size())
+  {
+    mc_rtc::log::info("[mc_mujoco] {} uses {} controller joints for {} MuJoCo joints; unmatched MuJoCo joints will "
+                      "be treated as internal/passive joints",
+                      name, rjo.size(), mj_jnt_names.size());
   }
   mj_to_mbc.resize(0);
   mj_prev_ctrl_q.resize(0);
@@ -409,6 +420,7 @@ void MjRobot::reset(const mc_rbdyn::Robot & robot)
   mj_jnt_to_rjo.resize(0);
   mj_to_mbc.resize(0);
   mj_is_gripper_joint.resize(0);
+  mj_general_act_ctrl_idx = -1;
   encoders = std::vector<double>(rjo.size(), 0.0);
   alphas = std::vector<double>(rjo.size(), 0.0);
   torques = std::vector<double>(rjo.size(), 0.0);
@@ -453,6 +465,20 @@ void MjRobot::reset(const mc_rbdyn::Robot & robot)
     {
       mj_to_mbc.push_back(-1);
       mj_is_gripper_joint.push_back(false);
+    }
+  }
+  if(mj_general_act_id != -1 && gripper_active_joints.size() == 1)
+  {
+    const auto prefixed_joint = prefixed(*gripper_active_joints.begin());
+    auto it = std::find(mj_jnt_names.begin(), mj_jnt_names.end(), prefixed_joint);
+    if(it != mj_jnt_names.end())
+    {
+      mj_general_act_ctrl_idx = static_cast<int>(std::distance(mj_jnt_names.begin(), it));
+    }
+    else
+    {
+      mc_rtc::log::warning("[mc_mujoco] Could not map gripper joint {} to a MuJoCo command source in {}",
+                           *gripper_active_joints.begin(), name);
     }
   }
   mj_ctrl = std::vector<double>(mj_prev_ctrl_q.size(), 0.0);
@@ -1026,6 +1052,26 @@ void MjRobot::sendControl(const mjModel & model,
       data.ctrl[vel_act_id] = alpha_ref;
     }
   }
+  if(mj_general_act_id != -1 && mj_general_act_ctrl_idx != -1)
+  {
+    const auto i = static_cast<size_t>(mj_general_act_ctrl_idx);
+    double q_ref = (interp_idx + 1) * (mj_next_ctrl_q[i] - mj_prev_ctrl_q[i]) / frameskip_;
+    q_ref += mj_prev_ctrl_q[i];
+
+    const auto joint_id = mj_jnt_ids[i];
+    const double joint_low = model.jnt_range[2 * joint_id];
+    const double joint_high = model.jnt_range[2 * joint_id + 1];
+    const double ctrl_low = model.actuator_ctrlrange[2 * mj_general_act_id];
+    const double ctrl_high = model.actuator_ctrlrange[2 * mj_general_act_id + 1];
+
+    double ctrl = ctrl_low;
+    if(joint_high > joint_low)
+    {
+      const double ratio = (q_ref - joint_low) / (joint_high - joint_low);
+      ctrl = ctrl_low + ratio * (ctrl_high - ctrl_low);
+    }
+    data.ctrl[mj_general_act_id] = std::clamp(ctrl, ctrl_low, ctrl_high);
+  }
 }
 
 bool MjSimImpl::controlStep()
@@ -1067,6 +1113,14 @@ void MjSimImpl::simStep()
   mju_zero(data->xfrc_applied, 6 * model->nbody);
   mjv_applyPerturbPose(model, data, &pert, 0); // move mocap bodies only
   mjv_applyPerturbForce(model, data, &pert);
+  if(pert.select > 0 && pert.active == mjPERT_TRANSLATE)
+  {
+    const Eigen::Map<const Eigen::Matrix<double, 6, 1>> pertWrench(data->xfrc_applied + 6 * pert.select);
+    mc_rtc::log::info("[mc_mujoco] MousePerturb injected mj_body_id={} local_point=[{:.3f}, {:.3f}, {:.3f}] "
+                      "xfrc(force,torque)=[{:.3f}, {:.3f}, {:.3f}; {:.3f}, {:.3f}, {:.3f}]",
+                      pert.select, pert.localpos[0], pert.localpos[1], pert.localpos[2], pertWrench[0], pertWrench[1],
+                      pertWrench[2], pertWrench[3], pertWrench[4], pertWrench[5]);
+  }
 
   // xfrc_applied is expressed at the body CoM, transport the requested wrench there
   for(const auto & pending : pending_body_forces_)
@@ -1084,6 +1138,7 @@ void MjSimImpl::simStep()
   // take one step in simulation
   // model.opt.timestep will be used here
   mj_step(model, data);
+  mju_zero(data->qfrc_applied, model->nv);
 
   wallclock = data->time;
 }
