@@ -111,9 +111,11 @@ target_include_directories(
   mc_mujoco_lib
   PRIVATE "${imgui_DIR}" "${implot_DIR}" "${mc_rtc-imgui_DIR}" "${assets_DIR}"
           "${ImGuizmo_DIR}" "${PROJECT_SOURCE_DIR}/ext/pugixml")
+find_package(Boost REQUIRED COMPONENTS program_options filesystem)
+
 target_link_libraries(
   mc_mujoco_lib PUBLIC mc_rtc::mc_control mc_rtc::mc_control_client
-                       ${CMAKE_DL_LIBS})
+                       Boost::filesystem ${CMAKE_DL_LIBS})
 if(UNIX)
   set(NO_AS_NEEDED "-Wl,--no-as-needed")
   set(AS_NEEDED "-Wl,--as-needed")
@@ -146,8 +148,6 @@ endif()
 if(NOT COMBINED_MC_MUJOCO_LIB)
   set_target_properties(mc_mujoco_lib PROPERTIES EXPORT_NAME mc_mujoco)
 endif()
-
-find_package(Boost REQUIRED COMPONENTS program_options)
 
 add_executable(mc_mujoco main.cpp)
 target_compile_definitions(mc_mujoco PUBLIC MUJOCO_BIN_DIR="${MUJOCO_BIN_DIR}")
