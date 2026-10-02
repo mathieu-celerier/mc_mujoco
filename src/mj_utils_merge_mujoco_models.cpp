@@ -124,9 +124,13 @@ static void add_prefix_recursively(const std::string & prefix,
   {
     add_prefix(prefix, out, "prefix", true);
   }
+  // Free joints always get a name so that the root joint of a robot can be found, this also covers the
+  // <joint type="free" /> form
+  bool is_free_joint = strcmp("freejoint", out.name()) == 0
+                       || (strcmp("joint", out.name()) == 0 && strcmp("free", out.attribute("type").value()) == 0);
   for(const auto & attr : attrs)
   {
-    add_prefix(prefix, out, attr.c_str(), strcmp("freejoint", out.name()) == 0 && attr == "name");
+    add_prefix(prefix, out, attr.c_str(), is_free_joint && attr == "name");
   }
   for(auto & c : out.children())
   {
