@@ -90,7 +90,7 @@ struct MjRobot
   /** Joints' torque in robot.ref_joint_order */
   std::vector<double> torques;
   /** Whether to feed external torques (qfrc_constraint) back to mc-rtc */
-  bool use_external_torques = false;
+  bool use_external_torques = true;
   bool is_external_torques_enabled_changed = false;
   /** External torques (qfrc_constraint) in robot mbc layout */
   Eigen::VectorXd tau_ext;
