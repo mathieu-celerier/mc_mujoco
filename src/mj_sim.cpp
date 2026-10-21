@@ -834,11 +834,14 @@ void MjRobot::updateSensors(mc_control::MCGlobalController * gc, mjModel * model
     root_ori.x() = data->qpos[root_qpos_idx + 4];
     root_ori.y() = data->qpos[root_qpos_idx + 5];
     root_ori.z() = data->qpos[root_qpos_idx + 6];
+    // MuJoCo free joint: linear velocity/acceleration in the world frame, angular ones in the
+    // body frame. mc_rtc's BodySensor (BodySensorObserver -> velW) expects both in the world frame.
+    const Eigen::Quaterniond world_from_body = root_ori;
     root_ori = root_ori.inverse();
     root_linvel = Eigen::Map<Eigen::Vector3d>(&data->qvel[root_qvel_idx]);
-    root_angvel = Eigen::Map<Eigen::Vector3d>(&data->qvel[root_qvel_idx + 3]);
+    root_angvel = world_from_body * Eigen::Map<Eigen::Vector3d>(&data->qvel[root_qvel_idx + 3]);
     root_linacc = Eigen::Map<Eigen::Vector3d>(&data->qacc[root_qvel_idx]);
-    root_angacc = Eigen::Map<Eigen::Vector3d>(&data->qacc[root_qvel_idx + 3]);
+    root_angacc = world_from_body * Eigen::Map<Eigen::Vector3d>(&data->qacc[root_qvel_idx + 3]);
     if(robot.hasBodySensor("FloatingBase"))
     {
       gc->setSensorPositions(name, {{"FloatingBase", root_pos}});
