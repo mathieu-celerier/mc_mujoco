@@ -1,5 +1,7 @@
 #pragma once
 
+#include <random>
+
 #include "mj_sim.h"
 
 #include "MujocoClient.h"
@@ -100,6 +102,44 @@ struct MjRobot
   std::map<std::string, Eigen::Vector3d> gyros;
   /** Accelerometer readings */
   std::map<std::string, Eigen::Vector3d> accelerometers;
+
+  /** Optional IMU noise (robot config "imuNoise": gyro, accelerometer = white-noise std per axis in rad/s and
+   * m/s^2; gyroBias, accelerometerBias = std of a constant per-axis bias drawn once; seed). MuJoCo stores the XML
+   * sensor noise but never applies it. */
+  struct ImuNoise
+  {
+    bool enabled = false;
+    double gyro = 0.0, accelerometer = 0.0, gyroBias = 0.0, accelerometerBias = 0.0;
+    std::mt19937 rng;
+    std::map<std::string, Eigen::Vector3d> gyroBiases, accelerometerBiases;
+  } imu_noise;
+  void setImuNoise(const mc_rtc::Configuration & c)
+  {
+    imu_noise.enabled = true;
+    c("gyro", imu_noise.gyro);
+    c("accelerometer", imu_noise.accelerometer);
+    c("gyroBias", imu_noise.gyroBias);
+    c("accelerometerBias", imu_noise.accelerometerBias);
+    imu_noise.rng.seed(static_cast<unsigned>(c("seed", 0)));
+    mc_rtc::log::info("[mc_mujoco] {} IMU noise: gyro {} rad/s (bias std {}), accelerometer {} m/s^2 (bias std {})", name,
+                      imu_noise.gyro, imu_noise.gyroBias, imu_noise.accelerometer, imu_noise.accelerometerBias);
+  }
+  void addImuNoise(const std::string & sensor, Eigen::Vector3d & v, bool isGyro)
+  {
+    if(!imu_noise.enabled) { return; }
+    std::normal_distribution<double> n(0.0, 1.0);
+    const double s = isGyro ? imu_noise.gyro : imu_noise.accelerometer;
+    v += s * Eigen::Vector3d(n(imu_noise.rng), n(imu_noise.rng), n(imu_noise.rng));
+    auto & biases = isGyro ? imu_noise.gyroBiases : imu_noise.accelerometerBiases;
+    if(!biases.count(sensor))  // drawn on first read: the sensor list is filled after the configuration
+    {
+      biases[sensor] = (isGyro ? imu_noise.gyroBias : imu_noise.accelerometerBias)
+                       * Eigen::Vector3d(n(imu_noise.rng), n(imu_noise.rng), n(imu_noise.rng));
+      mc_rtc::log::info("[mc_mujoco] {} {} {} bias [{}]", name, sensor, isGyro ? "gyro" : "accelerometer",
+                        biases[sensor].transpose());
+    }
+    v += biases[sensor];
+  }
 
   /** Proportional gains for low-level PD control (read from file) */
   std::vector<double> default_kp = {};

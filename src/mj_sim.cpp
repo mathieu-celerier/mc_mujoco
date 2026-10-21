@@ -145,6 +145,8 @@ MjSimImpl::MjSimImpl(const MjConfiguration & config)
   std::map<std::string, std::string> mcObjects;
   /** Map between name and pdgains file path of objects specified in mc-rtc config **/
   std::map<std::string, std::string> pdGainsFiles;
+  /** Optional per-robot IMU noise configuration ("imuNoise" in the robot's mc_mujoco config) **/
+  std::map<std::string, mc_rtc::Configuration> imuNoiseCfgs;
 
   // load all robots named in mujoco config
   auto mc_mujoco_cfg_path = fmt::format("{}/mc_mujoco.yaml", USER_FOLDER);
@@ -244,6 +246,7 @@ MjSimImpl::MjSimImpl(const MjConfiguration & config)
         }
 
         pdGainsFiles[r.name()] = pdGainsPath;
+        if(robot_cfg.has("imuNoise")) { imuNoiseCfgs[r.name()] = robot_cfg("imuNoise"); }
       };
 
       if(!robot_cfg.has("xmlModelPath") && (!robot_cfg.has(r.name()) || robot_cfg.has(main_robot_name)))
@@ -292,6 +295,10 @@ MjSimImpl::MjSimImpl(const MjConfiguration & config)
                                                        pdGainsFiles[r.name]);
     }
     r.loadGain(pdGainsFiles[r.name], controller->robots().robot(r.name).module().ref_joint_order());
+  }
+  for(auto & r : robots)
+  {
+    if(imuNoiseCfgs.count(r.name)) { r.setImuNoise(imuNoiseCfgs[r.name]); }
   }
 
   if(config.with_visualization)
@@ -857,6 +864,7 @@ void MjRobot::updateSensors(mc_control::MCGlobalController * gc, mjModel * model
   for(auto & gyro : gyros)
   {
     mujoco_get_sensordata(*model, *data, mc_bs_to_mj_gyro_id[gyro.first], gyro.second.data());
+    addImuNoise(gyro.first, gyro.second, true);
   }
   gc->setSensorAngularVelocities(name, gyros);
 
@@ -865,6 +873,7 @@ void MjRobot::updateSensors(mc_control::MCGlobalController * gc, mjModel * model
   {
     mujoco_get_sensordata(*model, *data, mc_bs_to_mj_accelerometer_id[accelerometer.first],
                           accelerometer.second.data());
+    addImuNoise(accelerometer.first, accelerometer.second, false);
   }
   gc->setSensorLinearAccelerations(name, accelerometers);
 
